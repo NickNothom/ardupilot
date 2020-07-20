@@ -175,7 +175,8 @@ public:
     bool send_battery_status() const;
     void send_distance_sensor() const;
     void send_high_latency();
-    
+    void send_high_latency2();
+
     // send_rangefinder sends only if a downward-facing instance is
     // found.  Rover overrides this!
     virtual void send_rangefinder() const;
@@ -313,6 +314,7 @@ protected:
     virtual void handle_command_ack(const mavlink_message_t &msg);
     void handle_set_mode(const mavlink_message_t &msg);
     void handle_command_int(const mavlink_message_t &msg);
+    void handle_command_control_high_latency(const mavlink_command_long_t &packet);
 
     MAV_RESULT handle_command_int_do_set_home(const mavlink_command_int_t &packet);
     virtual MAV_RESULT handle_command_int_packet(const mavlink_command_int_t &packet);

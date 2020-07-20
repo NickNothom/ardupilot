@@ -38,6 +38,7 @@
 #include <AP_VisualOdom/AP_VisualOdom.h>
 #include <AP_OpticalFlow/OpticalFlow.h>
 #include <AP_Baro/AP_Baro.h>
+#include <AP_WindVane/AP_WindVane.h>
 
 #include <stdio.h>
 
@@ -316,17 +317,28 @@ void GCS_MAVLINK::send_distance_sensor() const
 
 void GCS_MAVLINK::send_high_latency()
 {
+    // send extended status only once vehicle has been initialised
+    // to avoid unnecessary errors being reported to user
+    if (!gcs().vehicle_initialised()) {
+        return;
+    }
+
     AP_AHRS &ahrs = AP::ahrs();
     ahrs.get_position(global_position_current_loc); // return value ignored; we send stale data
 
     const AP_BattMonitor &battery = AP::battery();
     float battery_current;
+    int8_t battery_remaining;
 
     if (battery.healthy() && battery.current_amps(battery_current)) {
-        battery_current = constrain_float(battery_current * 100, -INT16_MAX,INT16_MAX);
+        battery_remaining = battery.capacity_remaining_pct();
+        battery_current *= 100;
     } else {
         battery_current = -1;
+        battery_remaining = -1;
     }
+
+    const AP_GPS &gps = AP::gps();
 
     //float temperature = AP::ins().get_temperature() * 100;
     //float temperature_air = AP::baro().get_temperature() * 100;
@@ -336,9 +348,9 @@ void GCS_MAVLINK::send_high_latency()
         base_mode(),
         gcs().custom_mode(),
         landed_state(),
-        ahrs.roll,
-        ahrs.pitch,
-        ahrs.yaw,
+        ahrs.roll_sensor,
+        ahrs.pitch_sensor,
+        ahrs.yaw_sensor,
         abs(vfr_hud_throttle()),
         /*heading_sp*/ 0,
         global_position_current_loc.lat,
@@ -349,9 +361,9 @@ void GCS_MAVLINK::send_high_latency()
         /*airspeed_sp*/ 0,
         ahrs.groundspeed(),
         vfr_hud_climbrate(),
-        /*satellites_visible*/ 0,
-        /*gps_fix_type*/ 0,
-        battery_current,
+        /*satellites_visible*/ gps.num_sats(0),
+        /*gps_fix_type*/ gps.status(0),
+        battery_remaining,
         /*temperature*/ 0,
         /*temperature_air*/ 0,
         /*failsafe*/ 0,
@@ -360,6 +372,66 @@ void GCS_MAVLINK::send_high_latency()
     );
 }
 
+void GCS_MAVLINK::send_high_latency2()
+{
+    // send extended status only once vehicle has been initialised
+    // to avoid unnecessary errors being reported to user
+    if (!gcs().vehicle_initialised()) {
+        return;
+    }
+
+    AP_AHRS &ahrs = AP::ahrs();
+    ahrs.get_position(global_position_current_loc); // return value ignored; we send stale data
+
+    const AP_BattMonitor &battery = AP::battery();
+    float battery_current;
+    int8_t battery_remaining;
+
+    if (battery.healthy() && battery.current_amps(battery_current)) {
+        battery_remaining = battery.capacity_remaining_pct();
+        battery_current *= 100;
+    } else {
+        battery_current = -1;
+        battery_remaining = -1;
+    }
+
+    const AP_GPS &gps = AP::gps();
+
+    //float temperature_air = AP::baro().get_temperature() * 100;
+
+    //See AP_WindVane::send_wind()
+
+    mavlink_msg_high_latency2_send(
+        /*chan*/ chan,
+        /*timestamp*/ AP_HAL::millis(),
+        /*type*/ gcs().frame_type(),
+        /*autopilot*/ MAV_AUTOPILOT_ARDUPILOTMEGA,
+        /*custom_mode*/ gcs().custom_mode(),
+        /*latitude*/ global_position_current_loc.lat,
+        /*longitude*/ global_position_current_loc.lng,
+        /*altitude*/ vfr_hud_alt(),
+        /*target_altitude*/ 0,
+        /*heading*/ (ahrs.yaw_sensor / 200) % 360,
+        /*target_heading*/ 0,
+        /*target_distance*/ 0,
+        /*throttle*/ abs(vfr_hud_throttle()),
+        /*airspeed*/ vfr_hud_airspeed() * 5,
+        /*airspeed_sp*/ 0 * 5,
+        /*groundspeed*/ ahrs.groundspeed() * 5,
+        /*windspeed*/ 0 * 5,
+        /*wind_heading*/ 0 * 0.5,
+        /*eph*/ gps.get_hdop(0),
+        /*epv*/ gps.get_vdop(0),
+        /*temperature_air*/ 0,
+        /*climb_rate*/ 0,
+        /*battery*/ battery_remaining,
+        /*wp_num*/ 0,
+        /*failure_flags*/ 0,
+        /*custom0*/ 0,
+        /*custom1*/ 0,
+        /*custom2*/ 0
+    );
+}
 void GCS_MAVLINK::send_rangefinder() const
 {
     RangeFinder *rangefinder = RangeFinder::get_singleton();
@@ -830,6 +902,7 @@ ap_message GCS_MAVLINK::mavlink_id_to_ap_message_id(const uint32_t mavlink_id) c
         { MAVLINK_MSG_ID_EXTENDED_SYS_STATE,    MSG_EXTENDED_SYS_STATE},
         { MAVLINK_MSG_ID_AUTOPILOT_VERSION,     MSG_AUTOPILOT_VERSION},
         { MAVLINK_MSG_ID_HIGH_LATENCY,     MSG_HIGH_LATENCY},
+        { MAVLINK_MSG_ID_HIGH_LATENCY2,     MSG_HIGH_LATENCY2},
             };
 
     for (uint8_t i=0; i<ARRAY_SIZE(map); i++) {
@@ -3763,6 +3836,10 @@ MAV_RESULT GCS_MAVLINK::handle_command_long_packet(const mavlink_command_long_t 
         }
 
         return MAV_RESULT_UNSUPPORTED;
+    
+    case MAV_CMD_CONTROL_HIGH_LATENCY:
+        handle_command_control_high_latency(packet);
+        break;
 
     default:
         result = MAV_RESULT_UNSUPPORTED;
@@ -3958,6 +4035,12 @@ void GCS_MAVLINK::handle_command_int(const mavlink_message_t &msg)
     AP::logger().Write_Command(packet, result);
 
     hal.util->persistent_data.last_mavlink_cmd = 0;
+}
+
+void GCS_MAVLINK::handle_command_control_high_latency(const mavlink_command_long_t &packet)
+{
+    //TODO Handle mav_cmd_control_high_latency
+    return;
 }
 
 void GCS::try_send_queued_message_for_type(MAV_MISSION_TYPE type) {
@@ -4194,7 +4277,9 @@ bool GCS_MAVLINK::try_send_message(const enum ap_message id)
     case MSG_HIGH_LATENCY:
         send_high_latency();
         break;
-
+    case MSG_HIGH_LATENCY2:
+        send_high_latency2();
+        break;
     case MSG_NEXT_PARAM:
         CHECK_PAYLOAD_SIZE(PARAM_VALUE);
         queued_param_send();

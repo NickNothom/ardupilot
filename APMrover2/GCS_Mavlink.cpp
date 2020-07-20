@@ -475,7 +475,8 @@ static const ap_message STREAM_EXTENDED_STATUS_msgs[] = {
     MSG_NAV_CONTROLLER_OUTPUT,
     MSG_FENCE_STATUS,
     MSG_POSITION_TARGET_GLOBAL_INT,
-    MSG_HIGH_LATENCY
+    MSG_HIGH_LATENCY,
+    MSG_HIGH_LATENCY2,
 };
 static const ap_message STREAM_POSITION_msgs[] = {
     MSG_LOCATION,
@@ -515,7 +516,7 @@ static const ap_message STREAM_EXTRA3_msgs[] = {
     MSG_VIBRATION,
     MSG_RPM,
     MSG_WHEEL_DISTANCE,
-    MSG_ESC_TELEMETRY,
+    MSG_ESC_TELEMETRY
 };
 static const ap_message STREAM_PARAMS_msgs[] = {
     MSG_NEXT_PARAM
